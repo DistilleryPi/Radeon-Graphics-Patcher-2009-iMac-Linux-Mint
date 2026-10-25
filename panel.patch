@@ -1,0 +1,48 @@
+--- a/drivers/gpu/drm/radeon/radeon_connectors.c
++++ b/drivers/gpu/drm/radeon/radeon_connectors.c
+@@ -754,16 +754,45 @@
+ 	if (!native_mode->clock) {
+ 		list_for_each_entry_safe(mode, t, &connector->probed_modes, head) {
+ 			if (mode->hdisplay == native_mode->hdisplay &&
+ 			    mode->vdisplay == native_mode->vdisplay) {
+ 				drm_mode_copy(native_mode, mode);
+ 				drm_mode_set_crtcinfo(native_mode, CRTC_INTERLACE_HALVE_V);
+ 				DRM_DEBUG_KMS("Determined LVDS native mode details from EDID\n");
+ 				break;
++			}
++		}
++	}
++
++	/* Experiment: keep this iMac's ATOM transmitter clock consistent with EDID.
++	 * Only changes the driver's RAM copy of LCD_Info; never flashes the ROM.
++	 */
++	{
++		struct radeon_device *rdev = connector->dev->dev_private;
++		u16 size, offset;
++		u8 frev, crev;
++		ATOM_LVDS_INFO_V12 *lcd;
++
++		if (rdev->pdev->device == 0x9488 &&
++		    rdev->pdev->subsystem_vendor == 0x106b &&
++		    rdev->pdev->subsystem_device == 0x00b6 &&
++		    native_mode->hdisplay == 1920 && native_mode->vdisplay == 1080 &&
++		    native_mode->clock == 138500 &&
++		    atom_parse_data_header(rdev->mode_info.atom_context,
++			GetIndexIntoMasterTable(DATA, LVDS_Info),
++			&size, &frev, &crev, &offset) &&
++		    frev == 1 && crev == 2 && size >= sizeof(*lcd)) {
++			lcd = (ATOM_LVDS_INFO_V12 *)(rdev->bios + offset);
++			if (le16_to_cpu(lcd->sLCDTiming.usPixClk) == 10800 &&
++			    lcd->ucLVDS_Misc == 0x4d) {
++				lcd->sLCDTiming.usPixClk = cpu_to_le16(13850);
++				/* RGB888 and FPDI; preserve dual-link/dithering/SS. */
++				lcd->ucLVDS_Misc |= 0x12;
++				DRM_INFO("iMac LVDS test: ATOM panel clock 108000 -> 138500 kHz, RGB888/FPDI enabled\n");
+ 			}
+ 		}
+ 	}
+ 
+ 	if (!native_mode->clock) {
+ 		DRM_DEBUG_KMS("No LVDS native mode details, disabling RMX\n");
+ 		radeon_encoder->rmx_type = RMX_OFF;
+ 	}
